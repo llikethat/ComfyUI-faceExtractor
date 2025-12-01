@@ -1,12 +1,12 @@
 {
-  "last_node_id": 12,
-  "last_link_id": 12,
+  "last_node_id": 6,
+  "last_link_id": 5,
   "nodes": [
     {
       "id": 1,
       "type": "LoadImage",
       "pos": [50, 50],
-      "size": {"0": 250, "1": 280},
+      "size": {"0": 250, "1": 314},
       "flags": {},
       "order": 0,
       "mode": 0,
@@ -16,13 +16,13 @@
       ],
       "properties": {},
       "widgets_values": ["reference_face.png"],
-      "title": "Reference Face"
+      "title": "Load Reference Face"
     },
     {
       "id": 2,
       "type": "DFLReferenceEmbedding",
       "pos": [350, 100],
-      "size": {"0": 280, "1": 82},
+      "size": {"0": 300, "1": 82},
       "flags": {},
       "order": 1,
       "mode": 0,
@@ -30,60 +30,30 @@
         {"name": "reference_images", "type": "IMAGE", "link": 1}
       ],
       "outputs": [
-        {"name": "reference_embedding", "type": "FACE_EMBEDDING", "links": [2, 6], "slot_index": 0}
+        {"name": "reference_embedding", "type": "FACE_EMBEDDING", "links": [2], "slot_index": 0}
       ],
       "properties": {},
       "widgets_values": ["insightface", 0.5]
     },
     {
       "id": 3,
-      "type": "VHS_LoadVideo",
-      "pos": [50, 380],
-      "size": {"0": 250, "1": 250},
+      "type": "DFLFaceExtractor",
+      "pos": [700, 50],
+      "size": {"0": 400, "1": 420},
       "flags": {},
       "order": 2,
-      "mode": 4,
-      "outputs": [
-        {"name": "IMAGE", "type": "IMAGE", "links": [3], "slot_index": 0},
-        {"name": "frame_count", "type": "INT", "links": null},
-        {"name": "audio", "type": "AUDIO", "links": null},
-        {"name": "video_info", "type": "VHS_VIDEOINFO", "links": null}
-      ],
-      "properties": {},
-      "widgets_values": {
-        "video": "short_clip.mp4",
-        "force_rate": 0,
-        "force_size": "Disabled",
-        "frame_load_cap": 500,
-        "skip_first_frames": 0,
-        "select_every_nth": 1
-      },
-      "title": "Option A: Short Video (<1000 frames)",
-      "color": "#223",
-      "bgcolor": "#335"
-    },
-    {
-      "id": 4,
-      "type": "DFLFaceExtractor",
-      "pos": [700, 100],
-      "size": {"0": 380, "1": 340},
-      "flags": {},
-      "order": 4,
-      "mode": 4,
+      "mode": 0,
       "inputs": [
-        {"name": "reference_embedding", "type": "FACE_EMBEDDING", "link": 2},
-        {"name": "images", "type": "IMAGE", "link": 3}
+        {"name": "reference_embedding", "type": "FACE_EMBEDDING", "link": 2}
       ],
       "outputs": [
-        {"name": "extracted_faces", "type": "IMAGE", "links": null, "slot_index": 0},
-        {"name": "masks", "type": "MASK", "links": null, "slot_index": 1},
-        {"name": "output_path", "type": "STRING", "links": [4], "slot_index": 2},
-        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 3},
-        {"name": "preview_grid", "type": "IMAGE", "links": [5], "slot_index": 4}
+        {"name": "output_path", "type": "STRING", "links": [3], "slot_index": 0},
+        {"name": "extracted_count", "type": "INT", "links": [4], "slot_index": 1},
+        {"name": "preview_grid", "type": "IMAGE", "links": [5], "slot_index": 2}
       ],
       "properties": {},
       "widgets_values": [
-        "",
+        "/path/to/your/video.mp4",
         0.6,
         0.4,
         512,
@@ -91,127 +61,70 @@
         1,
         0,
         -1,
+        "streaming",
+        75.0,
         "dfl_extract",
         true,
-        true,
-        "insightface",
-        500
+        "insightface"
       ],
-      "title": "Option A: Extract from IMAGE input",
-      "color": "#223",
-      "bgcolor": "#335"
+      "title": "Extract Faces from Video"
     },
     {
-      "id": 5,
-      "type": "DFLFaceExtractor",
-      "pos": [700, 500],
-      "size": {"0": 380, "1": 340},
+      "id": 4,
+      "type": "PreviewImage",
+      "pos": [1150, 50],
+      "size": {"0": 300, "1": 300},
       "flags": {},
       "order": 3,
       "mode": 0,
       "inputs": [
-        {"name": "reference_embedding", "type": "FACE_EMBEDDING", "link": 6}
-      ],
-      "outputs": [
-        {"name": "extracted_faces", "type": "IMAGE", "links": null, "slot_index": 0},
-        {"name": "masks", "type": "MASK", "links": null, "slot_index": 1},
-        {"name": "output_path", "type": "STRING", "links": [7], "slot_index": 2},
-        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 3},
-        {"name": "preview_grid", "type": "IMAGE", "links": [8], "slot_index": 4}
-      ],
-      "properties": {},
-      "widgets_values": [
-        "/path/to/large_movie.mp4",
-        0.6,
-        0.4,
-        512,
-        1,
-        2,
-        0,
-        -1,
-        "dfl_extract",
-        true,
-        true,
-        "insightface",
-        500
-      ],
-      "title": "Option B: Stream from video_path (LARGE VIDEOS)",
-      "color": "#322",
-      "bgcolor": "#533"
-    },
-    {
-      "id": 6,
-      "type": "PreviewImage",
-      "pos": [1130, 100],
-      "size": {"0": 280, "1": 280},
-      "flags": {},
-      "order": 5,
-      "mode": 4,
-      "inputs": [
         {"name": "images", "type": "IMAGE", "link": 5}
       ],
       "properties": {},
-      "title": "Preview A"
+      "title": "Preview Extracted Faces"
     },
     {
-      "id": 7,
-      "type": "PreviewImage",
-      "pos": [1130, 500],
-      "size": {"0": 280, "1": 280},
+      "id": 5,
+      "type": "ShowText|pysssss",
+      "pos": [1150, 400],
+      "size": {"0": 300, "1": 100},
       "flags": {},
-      "order": 6,
+      "order": 4,
       "mode": 0,
       "inputs": [
-        {"name": "images", "type": "IMAGE", "link": 8}
+        {"name": "text", "type": "STRING", "link": 3, "widget": {"name": "text"}}
       ],
       "properties": {},
-      "title": "Preview B"
+      "widgets_values": [""],
+      "title": "Output Path"
     },
     {
-      "id": 8,
+      "id": 6,
       "type": "Note",
-      "pos": [50, 680],
-      "size": {"0": 600, "1": 200},
+      "pos": [50, 400],
+      "size": {"0": 600, "1": 250},
       "flags": {},
-      "order": 7,
+      "order": 5,
       "mode": 0,
       "properties": {},
       "widgets_values": [
-        "TWO INPUT METHODS\n\n🔵 OPTION A: IMAGE Input (Blue - currently MUTED)\n- Use VHS_LoadVideo or LoadImageSequence\n- Good for SHORT clips (<1000 frames)\n- All frames loaded to RAM first\n\n🔴 OPTION B: video_path Input (Red - ACTIVE)\n- Direct video path as string\n- STREAMING mode - one frame at a time\n- Works with HUGE videos (hours of footage)\n- Much more memory efficient\n\nFor large video extraction, use Option B!"
+        "BASIC VIDEO EXTRACTION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n✓ NO VHS_LoadVideo needed!\n✓ Provide video path directly to the extractor\n✓ Works with videos of ANY length (streaming mode)\n✓ Memory-efficient: ~500MB RAM regardless of video length\n\nSTEPS:\n1. Load a reference image of your target character\n2. Enter the full path to your video file\n3. Adjust similarity_threshold (0.6 is good default)\n4. Run - faces saved to ComfyUI/output/dfl_extract_001/\n\nPROCESSING MODES:\n• streaming (default): One frame at a time - lowest memory\n• chunked: Batch processing - faster but uses more RAM"
       ],
       "color": "#432",
       "bgcolor": "#653"
-    },
-    {
-      "id": 9,
-      "type": "Note",
-      "pos": [1130, 400],
-      "size": {"0": 280, "1": 80},
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "properties": {},
-      "widgets_values": [
-        "GPU: Face detection uses CUDA\nCPU: Image loading, mask creation\n\nMemory cleared every 500 frames"
-      ],
-      "color": "#234",
-      "bgcolor": "#345"
     }
   ],
   "links": [
     [1, 1, 0, 2, 0, "IMAGE"],
-    [2, 2, 0, 4, 0, "FACE_EMBEDDING"],
-    [3, 3, 0, 4, 1, "IMAGE"],
-    [4, 4, 2, null, null, "STRING"],
-    [5, 4, 4, 6, 0, "IMAGE"],
-    [6, 2, 0, 5, 0, "FACE_EMBEDDING"],
-    [7, 5, 2, null, null, "STRING"],
-    [8, 5, 4, 7, 0, "IMAGE"]
+    [2, 2, 0, 3, 0, "FACE_EMBEDDING"],
+    [3, 3, 0, 5, 0, "STRING"],
+    [4, 3, 1, null, null, "INT"],
+    [5, 3, 2, 4, 0, "IMAGE"]
   ],
   "groups": [
-    {"title": "Reference", "bounding": [40, 0, 600, 350], "color": "#3f789e"},
-    {"title": "Option A: Short Video (IMAGE input)", "bounding": [40, 360, 600, 300], "color": "#3f789e"},
-    {"title": "Option B: Large Video (video_path)", "bounding": [680, 460, 430, 400], "color": "#8e4444"}
+    {"title": "1. Reference Face", "bounding": [40, 0, 620, 380], "color": "#3f789e"},
+    {"title": "2. Extract from Video (Direct Path)", "bounding": [680, 0, 450, 500], "color": "#27ae60"},
+    {"title": "3. Results", "bounding": [1130, 0, 340, 530], "color": "#e67e22"}
   ],
   "config": {},
   "extra": {},
