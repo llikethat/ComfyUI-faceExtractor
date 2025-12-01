@@ -1,10 +1,12 @@
 """
 DFL Face Extractor Nodes for ComfyUI
-Optimized version with:
-- Unified extractor accepting both IMAGE and video path
-- Chunked processing for large videos
-- GPU acceleration with memory management
-- Progress tracking
+Version 3.0 - Memory-aware chunked processing
+
+Features:
+- Built-in video loading with memory-aware chunking (no VHS dependency for large videos)
+- True frame-by-frame streaming for unlimited video length
+- Configurable memory threshold
+- GPU acceleration with automatic memory management
 """
 
 import os
@@ -12,13 +14,14 @@ import gc
 import cv2
 import numpy as np
 import torch
+import psutil
 from PIL import Image
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Generator
+from typing import List, Tuple, Optional, Dict, Generator, Union
 from datetime import datetime
 import json
-import hashlib
 import re
+import time
 
 # ComfyUI imports
 import folder_paths
@@ -33,27 +36,79 @@ except ImportError:
     print("[DFL Extractor] InsightFace not found, will use fallback methods")
 
 
-def get_device_info() -> dict:
-    """Get information about available compute devices"""
-    info = {
-        'cuda_available': torch.cuda.is_available(),
-        'cuda_device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0,
-        'cuda_device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-        'cuda_memory_total': None,
-        'cuda_memory_free': None
+# =============================================================================
+# Memory Management Utilities
+# =============================================================================
+
+def get_system_memory_info() -> dict:
+    """Get current system memory usage"""
+    mem = psutil.virtual_memory()
+    return {
+        'total_gb': mem.total / (1024**3),
+        'available_gb': mem.available / (1024**3),
+        'used_gb': mem.used / (1024**3),
+        'percent_used': mem.percent
     }
-    if info['cuda_available']:
-        info['cuda_memory_total'] = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-        info['cuda_memory_free'] = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
-    return info
 
 
-def clear_gpu_memory():
-    """Clear GPU memory cache"""
+def get_gpu_memory_info() -> dict:
+    """Get current GPU memory usage"""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated(0) / (1024**3)
+        reserved = torch.cuda.memory_reserved(0) / (1024**3)
+        total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        return {
+            'allocated_gb': allocated,
+            'reserved_gb': reserved,
+            'total_gb': total,
+            'free_gb': total - allocated,
+            'device_name': torch.cuda.get_device_name(0)
+        }
+    return {'available': False}
+
+
+def clear_memory():
+    """Aggressively clear both CPU and GPU memory"""
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        gc.collect()
+        torch.cuda.synchronize()
+    gc.collect()
 
+
+def estimate_frame_memory_mb(width: int, height: int, dtype_bytes: int = 3) -> float:
+    """Estimate memory usage per frame in MB"""
+    # Raw frame + processing overhead (roughly 2x for safety)
+    return (width * height * dtype_bytes * 2) / (1024**2)
+
+
+def calculate_safe_chunk_size(
+    video_width: int,
+    video_height: int,
+    memory_threshold_percent: float = 75.0,
+    min_chunk: int = 10,
+    max_chunk: int = 500
+) -> int:
+    """Calculate safe chunk size based on available memory"""
+    mem_info = get_system_memory_info()
+    available_mb = mem_info['available_gb'] * 1024
+    
+    # Calculate how much memory we can use
+    usable_mb = available_mb * (memory_threshold_percent / 100.0)
+    
+    # Estimate per-frame memory
+    frame_mb = estimate_frame_memory_mb(video_width, video_height)
+    
+    # Calculate chunk size with safety margin
+    safe_chunk = int(usable_mb / frame_mb / 2)  # Divide by 2 for safety
+    
+    # Clamp to reasonable bounds
+    return max(min_chunk, min(safe_chunk, max_chunk))
+
+
+# =============================================================================
+# Face Detection Backend
+# =============================================================================
 
 class FaceDetectorBackend:
     """
@@ -83,14 +138,14 @@ class FaceDetectorBackend:
     
     def _initialize(self):
         if self.backend == "insightface" and INSIGHTFACE_AVAILABLE:
-            # Check CUDA availability
             providers = ['CPUExecutionProvider']
             ctx_id = -1
             
             if torch.cuda.is_available() and self.device == "cuda":
                 providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
                 ctx_id = 0
-                print(f"[DFL Extractor] Using GPU: {torch.cuda.get_device_name(0)}")
+                gpu_info = get_gpu_memory_info()
+                print(f"[DFL Extractor] Using GPU: {gpu_info['device_name']} ({gpu_info['total_gb']:.1f} GB)")
             else:
                 print("[DFL Extractor] Using CPU for face detection")
             
@@ -116,8 +171,6 @@ class FaceDetectorBackend:
                     'landmarks': face.landmark_2d_106 if hasattr(face, 'landmark_2d_106') else face.kps,
                     'embedding': face.embedding,
                     'confidence': float(face.det_score),
-                    'age': getattr(face, 'age', None),
-                    'gender': getattr(face, 'gender', None)
                 })
             return results
         else:
@@ -137,22 +190,6 @@ class FaceDetectorBackend:
                 'confidence': 0.9
             })
         return results
-    
-    def get_embedding(self, image: np.ndarray, face_info: dict) -> Optional[np.ndarray]:
-        """Get face embedding for a detected face"""
-        if face_info.get('embedding') is not None:
-            return face_info['embedding']
-        
-        if self.backend == "insightface" and self.detector:
-            bbox = face_info['bbox']
-            x1, y1, x2, y2 = [int(c) for c in bbox]
-            face_crop = image[y1:y2, x1:x2]
-            if face_crop.size == 0:
-                return None
-            faces = self.detector.get(face_crop)
-            if faces:
-                return faces[0].embedding
-        return None
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -249,41 +286,241 @@ def create_preview_grid(images: List[np.ndarray], grid_size: int = 4, cell_size:
     return grid
 
 
-def video_frame_generator(video_path: str, frame_skip: int = 1, 
-                          start_frame: int = 0, end_frame: int = -1) -> Generator:
-    """
-    Generator that yields frames from video one at a time.
-    Memory efficient - only one frame in memory at a time.
-    """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Failed to open video: {video_path}")
-    
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    
-    if end_frame < 0:
-        end_frame = total_frames
-    
-    frame_idx = 0
-    
-    # Skip to start frame
-    if start_frame > 0:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        frame_idx = start_frame
-    
-    while frame_idx < end_frame:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        if (frame_idx - start_frame) % frame_skip == 0:
-            yield frame_idx, frame, fps, total_frames
-        
-        frame_idx += 1
-    
-    cap.release()
+# =============================================================================
+# Video Processing Classes
+# =============================================================================
 
+class VideoInfo:
+    """Container for video metadata"""
+    def __init__(self, path: str):
+        self.path = path
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open video: {path}")
+        
+        self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.fps = cap.get(cv2.CAP_PROP_FPS)
+        self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.duration_seconds = self.total_frames / self.fps if self.fps > 0 else 0
+        cap.release()
+    
+    def __str__(self):
+        return f"Video: {self.total_frames} frames, {self.width}x{self.height}, {self.fps:.2f} fps, {self.duration_seconds:.1f}s"
+
+
+class ChunkedVideoProcessor:
+    """
+    Memory-aware chunked video processor.
+    Loads and processes video in chunks based on available memory.
+    """
+    
+    def __init__(
+        self,
+        video_path: str,
+        memory_threshold_percent: float = 75.0,
+        frame_skip: int = 1,
+        start_frame: int = 0,
+        end_frame: int = -1
+    ):
+        self.video_path = video_path
+        self.memory_threshold = memory_threshold_percent
+        self.frame_skip = frame_skip
+        self.start_frame = start_frame
+        
+        self.video_info = VideoInfo(video_path)
+        self.end_frame = end_frame if end_frame > 0 else self.video_info.total_frames
+        
+        # Calculate optimal chunk size
+        self.chunk_size = calculate_safe_chunk_size(
+            self.video_info.width,
+            self.video_info.height,
+            memory_threshold_percent
+        )
+        
+        # Calculate total frames to process
+        self.frames_to_process = []
+        for i in range(self.start_frame, self.end_frame, self.frame_skip):
+            self.frames_to_process.append(i)
+        
+        self.total_frames_to_process = len(self.frames_to_process)
+        
+        print(f"[DFL Extractor] {self.video_info}")
+        print(f"[DFL Extractor] Processing {self.total_frames_to_process} frames (skip={frame_skip})")
+        print(f"[DFL Extractor] Chunk size: {self.chunk_size} frames")
+        print(f"[DFL Extractor] Memory threshold: {memory_threshold_percent}%")
+    
+    def process_chunks(
+        self,
+        detector: FaceDetectorBackend,
+        ref_embedding: np.ndarray,
+        similarity_threshold: float,
+        margin_factor: float,
+        output_size: int,
+        max_faces_per_frame: int,
+        aligned_dir: Path,
+        masks_dir: Path,
+        extraction_log: List[dict],
+        preview_faces: List[np.ndarray],
+        pbar
+    ) -> int:
+        """
+        Process video in memory-aware chunks.
+        Returns total number of faces extracted.
+        """
+        total_extracted = 0
+        chunk_idx = 0
+        frame_list_idx = 0
+        
+        while frame_list_idx < len(self.frames_to_process):
+            # Determine chunk boundaries
+            chunk_start_idx = frame_list_idx
+            chunk_end_idx = min(frame_list_idx + self.chunk_size, len(self.frames_to_process))
+            chunk_frames = self.frames_to_process[chunk_start_idx:chunk_end_idx]
+            
+            mem_before = get_system_memory_info()
+            print(f"[DFL Extractor] Processing chunk {chunk_idx + 1}: frames {chunk_frames[0]}-{chunk_frames[-1]} "
+                  f"(Memory: {mem_before['percent_used']:.1f}% used)")
+            
+            # Load chunk of frames
+            frames_data = self._load_frame_chunk(chunk_frames)
+            
+            # Process each frame in chunk
+            for i, (frame_idx, frame) in enumerate(frames_data):
+                # Detect faces
+                faces = detector.detect_faces(frame)
+                
+                # Score by similarity
+                scored_faces = []
+                for face in faces:
+                    emb = face.get('embedding')
+                    if emb is not None:
+                        sim = cosine_similarity(ref_embedding, emb)
+                        if sim >= similarity_threshold:
+                            scored_faces.append((sim, face))
+                
+                # Sort and select top matches
+                scored_faces.sort(key=lambda x: x[0], reverse=True)
+                selected_faces = scored_faces[:max_faces_per_frame]
+                
+                for face_idx, (sim_score, face) in enumerate(selected_faces):
+                    face_img, mask, _ = extract_face_with_margin(
+                        frame,
+                        face['bbox'],
+                        margin_factor=margin_factor,
+                        target_size=(output_size, output_size)
+                    )
+                    
+                    face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                    
+                    # Keep preview faces (first 16)
+                    if len(preview_faces) < 16:
+                        preview_faces.append(face_rgb.copy())
+                    
+                    # Save to disk immediately
+                    face_filename = f"{frame_idx:08d}_{face_idx}.png"
+                    mask_filename = f"{frame_idx:08d}_{face_idx}_mask.png"
+                    cv2.imwrite(str(aligned_dir / face_filename), face_img)
+                    cv2.imwrite(str(masks_dir / mask_filename), mask)
+                    
+                    extraction_log.append({
+                        'frame_idx': frame_idx,
+                        'face_idx': face_idx,
+                        'timestamp': frame_idx / self.video_info.fps if self.video_info.fps > 0 else 0,
+                        'similarity': float(sim_score),
+                        'bbox': face['bbox'],
+                        'confidence': face['confidence'],
+                        'filename': face_filename
+                    })
+                    
+                    total_extracted += 1
+                
+                pbar.update(1)
+                
+                # Clear frame reference
+                frame = None
+            
+            # Clear chunk data and force garbage collection
+            frames_data = None
+            clear_memory()
+            
+            mem_after = get_system_memory_info()
+            print(f"[DFL Extractor] Chunk {chunk_idx + 1} complete. "
+                  f"Extracted: {total_extracted} faces. "
+                  f"Memory: {mem_after['percent_used']:.1f}% used")
+            
+            frame_list_idx = chunk_end_idx
+            chunk_idx += 1
+        
+        return total_extracted
+    
+    def _load_frame_chunk(self, frame_indices: List[int]) -> List[Tuple[int, np.ndarray]]:
+        """Load specific frames from video"""
+        frames = []
+        cap = cv2.VideoCapture(self.video_path)
+        
+        for frame_idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if ret:
+                frames.append((frame_idx, frame))
+        
+        cap.release()
+        return frames
+
+
+class StreamingVideoProcessor:
+    """
+    True streaming processor - processes one frame at a time.
+    Minimal memory usage regardless of video length.
+    """
+    
+    def __init__(
+        self,
+        video_path: str,
+        frame_skip: int = 1,
+        start_frame: int = 0,
+        end_frame: int = -1
+    ):
+        self.video_path = video_path
+        self.frame_skip = frame_skip
+        self.start_frame = start_frame
+        
+        self.video_info = VideoInfo(video_path)
+        self.end_frame = end_frame if end_frame > 0 else self.video_info.total_frames
+        
+        # Calculate total frames to process
+        self.total_frames_to_process = len(range(start_frame, self.end_frame, frame_skip))
+        
+        print(f"[DFL Extractor] {self.video_info}")
+        print(f"[DFL Extractor] STREAMING MODE - Processing {self.total_frames_to_process} frames")
+        print(f"[DFL Extractor] Memory usage: ~constant (1 frame at a time)")
+    
+    def frame_generator(self) -> Generator[Tuple[int, np.ndarray], None, None]:
+        """Generator that yields one frame at a time"""
+        cap = cv2.VideoCapture(self.video_path)
+        
+        if self.start_frame > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, self.start_frame)
+        
+        frame_idx = self.start_frame
+        
+        while frame_idx < self.end_frame:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            if (frame_idx - self.start_frame) % self.frame_skip == 0:
+                yield frame_idx, frame
+            
+            frame_idx += 1
+        
+        cap.release()
+
+
+# =============================================================================
+# ComfyUI Nodes
+# =============================================================================
 
 class DFLReferenceEmbedding:
     """
@@ -322,6 +559,8 @@ class DFLReferenceEmbedding:
         else:
             images = reference_images.unsqueeze(0)
         
+        print(f"[DFL Extractor] Computing embeddings from {images.shape[0]} reference images...")
+        
         for i in range(images.shape[0]):
             img = images[i].cpu().numpy()
             img = (img * 255).astype(np.uint8)
@@ -332,8 +571,6 @@ class DFLReferenceEmbedding:
             for face in faces:
                 if face['confidence'] >= min_confidence:
                     emb = face.get('embedding')
-                    if emb is None:
-                        emb = detector.get_embedding(img, face)
                     if emb is not None:
                         embeddings.append(emb)
         
@@ -343,25 +580,27 @@ class DFLReferenceEmbedding:
         avg_embedding = np.mean(embeddings, axis=0)
         avg_embedding = avg_embedding / (np.linalg.norm(avg_embedding) + 1e-8)
         
-        device_info = get_device_info()
+        print(f"[DFL Extractor] Created embedding from {len(embeddings)} face(s)")
         
         return ({
             'embedding': avg_embedding,
             'num_references': len(embeddings),
             'detector_backend': detection_backend,
             'using_gpu': detector.using_gpu,
-            'device_info': device_info
         },)
 
 
 class DFLFaceExtractor:
     """
-    Unified face extractor with two input modes:
-    1. IMAGE input: For short sequences (from LoadImage, VHS_LoadVideo for short clips)
-    2. video_path input: For large videos - uses chunked streaming processing
+    Memory-aware face extractor with built-in video loading.
     
-    GPU accelerated face detection with memory management.
-    Auto-creates output folders with incrementing numbers.
+    NO NEED FOR VHS_LoadVideo - provide video path directly!
+    
+    Processing modes:
+    1. STREAMING (default): One frame at a time - works with ANY video length
+    2. CHUNKED: Load frames in memory-aware batches - faster but uses more RAM
+    
+    For IMAGE input (from other nodes): Processes in memory-aware batches
     """
     
     @classmethod
@@ -369,33 +608,33 @@ class DFLFaceExtractor:
         return {
             "required": {
                 "reference_embedding": ("FACE_EMBEDDING",),
+                "video_path": ("STRING", {"default": "", "multiline": False}),
             },
             "optional": {
-                # Image input (for short sequences)
+                # Alternative IMAGE input (for compatibility, but video_path preferred)
                 "images": ("IMAGE",),
-                # Video path input (for large videos - streamed processing)
-                "video_path": ("STRING", {"default": "", "multiline": False}),
                 # Processing settings
                 "similarity_threshold": ("FLOAT", {"default": 0.6, "min": 0.3, "max": 0.95, "step": 0.05}),
                 "margin_factor": ("FLOAT", {"default": 0.4, "min": 0.1, "max": 1.0, "step": 0.05}),
                 "output_size": ("INT", {"default": 512, "min": 128, "max": 1024, "step": 64}),
                 "max_faces_per_frame": ("INT", {"default": 1, "min": 1, "max": 10, "step": 1}),
-                # Video-specific settings
+                # Video settings
                 "frame_skip": ("INT", {"default": 1, "min": 1, "max": 60, "step": 1}),
                 "start_frame": ("INT", {"default": 0, "min": 0, "max": 9999999, "step": 1}),
                 "end_frame": ("INT", {"default": -1, "min": -1, "max": 9999999, "step": 1}),
+                # Memory management
+                "processing_mode": (["streaming", "chunked"], {"default": "streaming"}),
+                "memory_threshold_percent": ("FLOAT", {"default": 75.0, "min": 30.0, "max": 90.0, "step": 5.0}),
                 # Output settings
                 "output_prefix": ("STRING", {"default": "dfl_extract", "multiline": False}),
-                "save_to_disk": ("BOOLEAN", {"default": True}),
                 "save_debug_info": ("BOOLEAN", {"default": True}),
-                # Performance settings
+                # Performance
                 "detection_backend": (["insightface", "opencv_cascade"], {"default": "insightface"}),
-                "clear_gpu_every_n_frames": ("INT", {"default": 500, "min": 0, "max": 10000, "step": 100}),
             }
         }
     
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "INT", "IMAGE")
-    RETURN_NAMES = ("extracted_faces", "masks", "output_path", "extracted_count", "preview_grid")
+    RETURN_TYPES = ("STRING", "INT", "IMAGE")
+    RETURN_NAMES = ("output_path", "extracted_count", "preview_grid")
     FUNCTION = "extract_faces"
     CATEGORY = "DFL Extractor"
     OUTPUT_NODE = True
@@ -403,8 +642,8 @@ class DFLFaceExtractor:
     def extract_faces(
         self,
         reference_embedding: dict,
-        images: torch.Tensor = None,
         video_path: str = "",
+        images: torch.Tensor = None,
         similarity_threshold: float = 0.6,
         margin_factor: float = 0.4,
         output_size: int = 512,
@@ -412,22 +651,26 @@ class DFLFaceExtractor:
         frame_skip: int = 1,
         start_frame: int = 0,
         end_frame: int = -1,
+        processing_mode: str = "streaming",
+        memory_threshold_percent: float = 75.0,
         output_prefix: str = "dfl_extract",
-        save_to_disk: bool = True,
         save_debug_info: bool = True,
-        detection_backend: str = "insightface",
-        clear_gpu_every_n_frames: int = 500
+        detection_backend: str = "insightface"
     ):
         # Determine input mode
         use_video_path = video_path and os.path.exists(video_path)
         use_image_input = images is not None and images.numel() > 0
         
         if not use_video_path and not use_image_input:
-            raise ValueError("Either 'images' or 'video_path' must be provided")
+            raise ValueError("Provide either 'video_path' to a video file or connect 'images' input")
         
         if use_video_path and use_image_input:
-            print("[DFL Extractor] Both inputs provided - using video_path for streaming (more memory efficient)")
+            print("[DFL Extractor] Both inputs provided - using video_path (recommended for large videos)")
             use_image_input = False
+        
+        # Show memory status
+        mem_info = get_system_memory_info()
+        print(f"[DFL Extractor] System Memory: {mem_info['available_gb']:.1f} GB available / {mem_info['total_gb']:.1f} GB total")
         
         # Initialize detector
         detector = FaceDetectorBackend(backend=detection_backend)
@@ -437,204 +680,203 @@ class DFLFaceExtractor:
         output_base = Path(folder_paths.get_output_directory())
         output_path = get_next_output_folder(output_base, output_prefix)
         
-        if save_to_disk:
-            aligned_dir = output_path / "aligned"
-            masks_dir = output_path / "masks"
-            aligned_dir.mkdir(exist_ok=True)
-            masks_dir.mkdir(exist_ok=True)
+        aligned_dir = output_path / "aligned"
+        masks_dir = output_path / "masks"
+        aligned_dir.mkdir(exist_ok=True)
+        masks_dir.mkdir(exist_ok=True)
         
-        extracted_faces = []
-        extracted_masks = []
         extraction_log = []
         preview_faces = []
+        total_extracted = 0
         
-        processing_mode = "video_stream" if use_video_path else "image_batch"
+        start_time = time.time()
         
-        # ============================================
-        # MODE 1: Video streaming (memory efficient)
-        # ============================================
+        # ================================================================
+        # VIDEO PATH PROCESSING (Recommended for large videos)
+        # ================================================================
         if use_video_path:
-            print(f"[DFL Extractor] Processing video in streaming mode: {video_path}")
-            print(f"[DFL Extractor] Frame skip: {frame_skip}, Start: {start_frame}, End: {end_frame}")
-            
-            # Get video info for progress bar
-            cap = cv2.VideoCapture(video_path)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            cap.release()
-            
-            actual_end = end_frame if end_frame > 0 else total_frames
-            frames_to_process = (actual_end - start_frame) // frame_skip
-            
-            print(f"[DFL Extractor] Total frames: {total_frames}, Processing: ~{frames_to_process}")
-            print(f"[DFL Extractor] Using GPU: {detector.using_gpu}")
-            
-            pbar = comfy.utils.ProgressBar(frames_to_process)
-            processed_count = 0
-            
-            for frame_idx, frame, vid_fps, vid_total in video_frame_generator(
-                video_path, frame_skip, start_frame, end_frame
-            ):
-                # Process frame
-                faces = detector.detect_faces(frame)
+            if processing_mode == "streaming":
+                # TRUE STREAMING - One frame at a time
+                processor = StreamingVideoProcessor(
+                    video_path, frame_skip, start_frame, end_frame
+                )
                 
-                scored_faces = []
-                for face in faces:
-                    emb = face.get('embedding')
-                    if emb is None:
-                        emb = detector.get_embedding(frame, face)
-                    if emb is not None:
-                        sim = cosine_similarity(ref_emb, emb)
-                        if sim >= similarity_threshold:
-                            scored_faces.append((sim, face))
+                pbar = comfy.utils.ProgressBar(processor.total_frames_to_process)
                 
-                scored_faces.sort(key=lambda x: x[0], reverse=True)
-                selected_faces = scored_faces[:max_faces_per_frame]
-                
-                for face_idx, (sim_score, face) in enumerate(selected_faces):
-                    face_img, mask, transform_info = extract_face_with_margin(
-                        frame,
-                        face['bbox'],
-                        margin_factor=margin_factor,
-                        target_size=(output_size, output_size)
-                    )
+                for frame_idx, frame in processor.frame_generator():
+                    # Detect faces
+                    faces = detector.detect_faces(frame)
                     
-                    face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                    # Score by similarity
+                    scored_faces = []
+                    for face in faces:
+                        emb = face.get('embedding')
+                        if emb is not None:
+                            sim = cosine_similarity(ref_emb, emb)
+                            if sim >= similarity_threshold:
+                                scored_faces.append((sim, face))
                     
-                    # Only keep in memory for preview (first 16)
-                    if len(preview_faces) < 16:
-                        preview_faces.append(face_rgb.copy())
+                    # Select top matches
+                    scored_faces.sort(key=lambda x: x[0], reverse=True)
+                    selected_faces = scored_faces[:max_faces_per_frame]
                     
-                    # Save to disk immediately (streaming)
-                    if save_to_disk:
+                    for face_idx, (sim_score, face) in enumerate(selected_faces):
+                        face_img, mask, _ = extract_face_with_margin(
+                            frame,
+                            face['bbox'],
+                            margin_factor=margin_factor,
+                            target_size=(output_size, output_size)
+                        )
+                        
+                        face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                        
+                        if len(preview_faces) < 16:
+                            preview_faces.append(face_rgb.copy())
+                        
+                        # Save immediately
                         face_filename = f"{frame_idx:08d}_{face_idx}.png"
                         mask_filename = f"{frame_idx:08d}_{face_idx}_mask.png"
                         cv2.imwrite(str(aligned_dir / face_filename), face_img)
                         cv2.imwrite(str(masks_dir / mask_filename), mask)
+                        
+                        extraction_log.append({
+                            'frame_idx': frame_idx,
+                            'face_idx': face_idx,
+                            'timestamp': frame_idx / processor.video_info.fps if processor.video_info.fps > 0 else 0,
+                            'similarity': float(sim_score),
+                            'bbox': face['bbox'],
+                            'confidence': face['confidence'],
+                            'filename': face_filename
+                        })
+                        
+                        total_extracted += 1
                     
-                    extraction_log.append({
-                        'frame_idx': frame_idx,
-                        'face_idx': face_idx,
-                        'timestamp': frame_idx / vid_fps if vid_fps > 0 else 0,
-                        'similarity': float(sim_score),
-                        'bbox': face['bbox'],
-                        'confidence': face['confidence'],
-                        'filename': f"{frame_idx:08d}_{face_idx}.png" if save_to_disk else None
-                    })
+                    pbar.update(1)
+                    
+                    # Periodic cleanup
+                    if len(extraction_log) % 500 == 0 and len(extraction_log) > 0:
+                        clear_memory()
                 
-                processed_count += 1
-                pbar.update(1)
+            else:
+                # CHUNKED PROCESSING - Memory-aware batches
+                processor = ChunkedVideoProcessor(
+                    video_path, memory_threshold_percent, frame_skip, start_frame, end_frame
+                )
                 
-                # Periodic GPU memory cleanup
-                if clear_gpu_every_n_frames > 0 and processed_count % clear_gpu_every_n_frames == 0:
-                    clear_gpu_memory()
-            
-            # For video mode, we don't return all faces in memory (too large)
-            # Just return empty tensors - faces are saved to disk
-            extracted_count = len(extraction_log)
-            faces_tensor = torch.zeros(1, output_size, output_size, 3)
-            masks_tensor = torch.zeros(1, output_size, output_size)
+                pbar = comfy.utils.ProgressBar(processor.total_frames_to_process)
+                
+                total_extracted = processor.process_chunks(
+                    detector, ref_emb, similarity_threshold, margin_factor,
+                    output_size, max_faces_per_frame, aligned_dir, masks_dir,
+                    extraction_log, preview_faces, pbar
+                )
         
-        # ============================================
-        # MODE 2: Image batch processing
-        # ============================================
+        # ================================================================
+        # IMAGE INPUT PROCESSING (From VHS or other nodes)
+        # ================================================================
         else:
             if len(images.shape) == 3:
                 images = images.unsqueeze(0)
             
             num_frames = images.shape[0]
-            print(f"[DFL Extractor] Processing {num_frames} images from batch")
-            print(f"[DFL Extractor] Using GPU: {detector.using_gpu}")
+            print(f"[DFL Extractor] Processing {num_frames} images from IMAGE input")
+            print(f"[DFL Extractor] WARNING: For large videos, use video_path instead of VHS_LoadVideo!")
+            
+            # Calculate batch size based on memory
+            frame_memory_mb = estimate_frame_memory_mb(images.shape[2], images.shape[1])
+            batch_size = calculate_safe_chunk_size(
+                images.shape[2], images.shape[1], 
+                memory_threshold_percent, min_chunk=1, max_chunk=100
+            )
+            
+            print(f"[DFL Extractor] Processing in batches of {batch_size} frames")
             
             pbar = comfy.utils.ProgressBar(num_frames)
             
-            for frame_idx in range(num_frames):
-                img = images[frame_idx].cpu().numpy()
-                img = (img * 255).astype(np.uint8)
-                img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            for batch_start in range(0, num_frames, batch_size):
+                batch_end = min(batch_start + batch_size, num_frames)
                 
-                faces = detector.detect_faces(img_bgr)
-                
-                scored_faces = []
-                for face in faces:
-                    emb = face.get('embedding')
-                    if emb is None:
-                        emb = detector.get_embedding(img_bgr, face)
-                    if emb is not None:
-                        sim = cosine_similarity(ref_emb, emb)
-                        if sim >= similarity_threshold:
-                            scored_faces.append((sim, face))
-                
-                scored_faces.sort(key=lambda x: x[0], reverse=True)
-                selected_faces = scored_faces[:max_faces_per_frame]
-                
-                for face_idx, (sim_score, face) in enumerate(selected_faces):
-                    face_img, mask, transform_info = extract_face_with_margin(
-                        img_bgr,
-                        face['bbox'],
-                        margin_factor=margin_factor,
-                        target_size=(output_size, output_size)
-                    )
+                for frame_idx in range(batch_start, batch_end):
+                    img = images[frame_idx].cpu().numpy()
+                    img = (img * 255).astype(np.uint8)
+                    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                     
-                    face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-                    extracted_faces.append(face_rgb)
-                    extracted_masks.append(mask)
+                    faces = detector.detect_faces(img_bgr)
                     
-                    if len(preview_faces) < 16:
-                        preview_faces.append(face_rgb)
+                    scored_faces = []
+                    for face in faces:
+                        emb = face.get('embedding')
+                        if emb is not None:
+                            sim = cosine_similarity(ref_emb, emb)
+                            if sim >= similarity_threshold:
+                                scored_faces.append((sim, face))
                     
-                    if save_to_disk:
+                    scored_faces.sort(key=lambda x: x[0], reverse=True)
+                    selected_faces = scored_faces[:max_faces_per_frame]
+                    
+                    for face_idx, (sim_score, face) in enumerate(selected_faces):
+                        face_img, mask, _ = extract_face_with_margin(
+                            img_bgr,
+                            face['bbox'],
+                            margin_factor=margin_factor,
+                            target_size=(output_size, output_size)
+                        )
+                        
+                        face_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+                        
+                        if len(preview_faces) < 16:
+                            preview_faces.append(face_rgb)
+                        
                         face_filename = f"{frame_idx:08d}_{face_idx}.png"
                         mask_filename = f"{frame_idx:08d}_{face_idx}_mask.png"
                         cv2.imwrite(str(aligned_dir / face_filename), face_img)
                         cv2.imwrite(str(masks_dir / mask_filename), mask)
+                        
+                        extraction_log.append({
+                            'frame_idx': frame_idx,
+                            'face_idx': face_idx,
+                            'similarity': float(sim_score),
+                            'bbox': face['bbox'],
+                            'confidence': face['confidence'],
+                            'filename': face_filename
+                        })
+                        
+                        total_extracted += 1
                     
-                    extraction_log.append({
-                        'frame_idx': frame_idx,
-                        'face_idx': face_idx,
-                        'similarity': float(sim_score),
-                        'bbox': face['bbox'],
-                        'confidence': face['confidence'],
-                        'filename': f"{frame_idx:08d}_{face_idx}.png" if save_to_disk else None
-                    })
+                    pbar.update(1)
                 
-                pbar.update(1)
-                
-                if clear_gpu_every_n_frames > 0 and (frame_idx + 1) % clear_gpu_every_n_frames == 0:
-                    clear_gpu_memory()
-            
-            # Create output tensors
-            if extracted_faces:
-                faces_np = np.stack(extracted_faces, axis=0)
-                masks_np = np.stack(extracted_masks, axis=0)
-                faces_tensor = torch.from_numpy(faces_np).float() / 255.0
-                masks_tensor = torch.from_numpy(masks_np).float() / 255.0
-            else:
-                faces_tensor = torch.zeros(1, output_size, output_size, 3)
-                masks_tensor = torch.zeros(1, output_size, output_size)
-            
-            extracted_count = len(extracted_faces)
+                # Clear memory after each batch
+                clear_memory()
+        
+        # ================================================================
+        # Finalize
+        # ================================================================
+        elapsed_time = time.time() - start_time
         
         # Save extraction log
-        if save_to_disk and save_debug_info:
-            device_info = get_device_info()
+        if save_debug_info:
             log_data = {
                 'timestamp': datetime.now().isoformat(),
-                'processing_mode': processing_mode,
-                'source': video_path if use_video_path else "image_batch",
-                'extracted_count': len(extraction_log),
+                'elapsed_seconds': elapsed_time,
+                'processing_mode': processing_mode if use_video_path else "image_batch",
+                'source': video_path if use_video_path else "image_input",
+                'extracted_count': total_extracted,
                 'settings': {
                     'similarity_threshold': similarity_threshold,
                     'margin_factor': margin_factor,
                     'output_size': output_size,
                     'max_faces_per_frame': max_faces_per_frame,
-                    'frame_skip': frame_skip if use_video_path else 1,
+                    'frame_skip': frame_skip,
+                    'memory_threshold_percent': memory_threshold_percent,
                     'detection_backend': detection_backend
                 },
                 'reference_info': {
                     'num_references': reference_embedding.get('num_references', 1)
                 },
-                'device_info': device_info,
+                'system_info': {
+                    'gpu': get_gpu_memory_info(),
+                    'memory': get_system_memory_info()
+                },
                 'extractions': extraction_log
             }
             with open(output_path / "extraction_log.json", 'w') as f:
@@ -649,11 +891,12 @@ class DFLFaceExtractor:
             grid_tensor = torch.zeros(1, 512, 512, 3)
         
         # Final cleanup
-        clear_gpu_memory()
+        clear_memory()
         
-        print(f"[DFL Extractor] Extracted {len(extraction_log)} faces to {output_path}")
+        print(f"[DFL Extractor] ✓ Extracted {total_extracted} faces to {output_path}")
+        print(f"[DFL Extractor] ✓ Time: {elapsed_time:.1f}s ({total_extracted/elapsed_time:.1f} faces/sec)")
         
-        return (faces_tensor, masks_tensor, str(output_path), len(extraction_log), grid_tensor)
+        return (str(output_path), total_extracted, grid_tensor)
 
 
 class DFLFaceMatcher:
@@ -702,11 +945,6 @@ class DFLFaceMatcher:
         emb_a = faces_a[0].get('embedding')
         emb_b = faces_b[0].get('embedding')
         
-        if emb_a is None:
-            emb_a = detector.get_embedding(img_a_bgr, faces_a[0])
-        if emb_b is None:
-            emb_b = detector.get_embedding(img_b_bgr, faces_b[0])
-        
         if emb_a is None or emb_b is None:
             return (0.0, "Failed to compute embeddings")
         
@@ -720,86 +958,12 @@ class DFLFaceMatcher:
         elif similarity >= 0.3:
             match_level = "Weak similarity"
         
-        device_info = get_device_info()
-        gpu_str = f"\nUsing GPU: {device_info['cuda_device_name']}" if device_info['cuda_available'] else "\nUsing CPU"
+        gpu_info = get_gpu_memory_info()
+        gpu_str = f"\nUsing GPU: {gpu_info.get('device_name', 'N/A')}" if gpu_info.get('device_name') else "\nUsing CPU"
         
         info = f"Similarity: {similarity:.4f}\nMatch level: {match_level}{gpu_str}"
         
         return (float(similarity), info)
-
-
-class DFLBatchSaver:
-    """Save extracted faces in DFL-compatible directory structure"""
-    
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "faces": ("IMAGE",),
-                "masks": ("MASK",),
-            },
-            "optional": {
-                "output_prefix": ("STRING", {"default": "dfl_dataset", "multiline": False}),
-                "dataset_type": (["source", "destination"], {"default": "source"}),
-                "start_index": ("INT", {"default": 0, "min": 0, "max": 999999}),
-                "filename_prefix": ("STRING", {"default": "", "multiline": False}),
-            }
-        }
-    
-    RETURN_TYPES = ("STRING", "INT")
-    RETURN_NAMES = ("output_path", "saved_count")
-    FUNCTION = "save_dataset"
-    CATEGORY = "DFL Extractor"
-    OUTPUT_NODE = True
-    
-    def save_dataset(
-        self,
-        faces: torch.Tensor,
-        masks: torch.Tensor,
-        output_prefix: str = "dfl_dataset",
-        dataset_type: str = "source",
-        start_index: int = 0,
-        filename_prefix: str = ""
-    ):
-        output_base = Path(folder_paths.get_output_directory())
-        output_path = get_next_output_folder(output_base, output_prefix)
-        
-        aligned_dir = output_path / "aligned"
-        aligned_dir.mkdir(parents=True, exist_ok=True)
-        
-        faces_np = (faces.cpu().numpy() * 255).astype(np.uint8)
-        masks_np = (masks.cpu().numpy() * 255).astype(np.uint8)
-        
-        saved_count = 0
-        
-        for i in range(faces_np.shape[0]):
-            idx = start_index + i
-            prefix = f"{filename_prefix}_" if filename_prefix else ""
-            
-            face_filename = f"{prefix}{idx:08d}.png"
-            mask_filename = f"{prefix}{idx:08d}_mask.png"
-            
-            face_bgr = cv2.cvtColor(faces_np[i], cv2.COLOR_RGB2BGR)
-            cv2.imwrite(str(aligned_dir / face_filename), face_bgr)
-            
-            if len(masks_np.shape) == 3:
-                mask = masks_np[i]
-            else:
-                mask = masks_np
-            cv2.imwrite(str(aligned_dir / mask_filename), mask)
-            
-            saved_count += 1
-        
-        info = {
-            'dataset_type': dataset_type,
-            'count': saved_count,
-            'start_index': start_index,
-            'timestamp': datetime.now().isoformat()
-        }
-        with open(output_path / "dataset_info.json", 'w') as f:
-            json.dump(info, f, indent=2)
-        
-        return (str(output_path), saved_count)
 
 
 # Node mappings for ComfyUI
@@ -807,12 +971,10 @@ NODE_CLASS_MAPPINGS = {
     "DFLReferenceEmbedding": DFLReferenceEmbedding,
     "DFLFaceExtractor": DFLFaceExtractor,
     "DFLFaceMatcher": DFLFaceMatcher,
-    "DFLBatchSaver": DFLBatchSaver,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DFLReferenceEmbedding": "DFL Reference Embedding",
     "DFLFaceExtractor": "DFL Face Extractor",
     "DFLFaceMatcher": "DFL Face Matcher",
-    "DFLBatchSaver": "DFL Dataset Saver",
 }
