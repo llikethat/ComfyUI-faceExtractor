@@ -30,13 +30,13 @@ The node automatically detects CUDA availability and uses GPU when possible.
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/your-repo/comfyui_dfl_extractor.git
+git clone https://github.com/llikethat/ComfyUI_faceExtractor.git
 ```
 
 ### 2. Install dependencies
 
 ```bash
-cd comfyui_dfl_extractor
+cd comfyui_faceExtractor
 pip install -r requirements.txt
 ```
 
