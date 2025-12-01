@@ -131,6 +131,7 @@
         -1,
         "streaming",
         75.0,
+        0,
         "multi_ref",
         true,
         "mediapipe"

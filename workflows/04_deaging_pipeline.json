@@ -67,6 +67,7 @@
         -1,
         "streaming",
         75.0,
+        0,
         "data_src",
         true,
         "mediapipe"
@@ -156,6 +157,7 @@
         -1,
         "streaming",
         75.0,
+        0,
         "data_dst",
         true,
         "mediapipe"

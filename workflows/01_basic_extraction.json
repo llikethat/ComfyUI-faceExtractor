@@ -64,6 +64,7 @@
         -1,
         "streaming",
         75.0,
+        0,
         "face_extract",
         true,
         "mediapipe"
@@ -109,7 +110,7 @@
       "mode": 0,
       "properties": {},
       "widgets_values": [
-        "BASIC FACE EXTRACTION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n✓ Direct video path - no VHS_LoadVideo needed\n✓ Streaming mode - works with ANY video length\n✓ Aspect ratio preserved - no squashing\n✓ GPU memory flushed automatically\n\nBACKEND OPTIONS:\n• insightface - Best quality, NON-COMMERCIAL ONLY!\n• mediapipe - Good quality, Commercial OK ✓\n• opencv_cascade - Basic, Commercial OK ✓\n\n⚠️  For commercial projects, use mediapipe!\n\nSTEPS:\n1. Load reference face image\n2. Enter video path (full path to file)\n3. Choose detection_backend based on license needs\n4. Run - faces saved to ComfyUI/output/face_extract_001/"
+        "BASIC FACE EXTRACTION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n✓ Direct video path - no VHS_LoadVideo needed\n✓ Streaming mode - works with ANY video length\n✓ Aspect ratio preserved - no squashing\n✓ GPU memory flushed automatically\n\nBACKEND OPTIONS:\n• insightface - Best quality, NON-COMMERCIAL ONLY!\n• mediapipe - Good quality, Commercial OK ✓\n• opencv_cascade - Basic, Commercial OK ✓\n\nCHUNKING OPTIONS:\n• chunk_size=0: Auto-calculate based on memory\n• chunk_size=100-500: Manual control\n\n⚠️  For commercial projects, use mediapipe!"
       ],
       "color": "#432",
       "bgcolor": "#653"
