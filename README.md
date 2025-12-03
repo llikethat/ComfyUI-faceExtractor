@@ -236,16 +236,6 @@ The `extraction_log.json` includes:
 
 ---
 
-## Use with DeepFaceLab
-
-After extraction, copy faces to DFL workspace:
-
-```bash
-cp ComfyUI/output/face_extract_001/aligned/* workspace/data_src/aligned/
-```
-
----
-
 ## Workflows
 
 | Workflow | Description |
