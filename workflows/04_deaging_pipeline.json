@@ -35,7 +35,7 @@
         {"name": "reference_embedding", "type": "FACE_EMBEDDING", "links": [2], "slot_index": 0}
       ],
       "properties": {},
-      "widgets_values": ["mediapipe", 0.5],
+      "widgets_values": ["facenet", 0.5],
       "color": "#223",
       "bgcolor": "#446"
     },
@@ -52,8 +52,9 @@
       ],
       "outputs": [
         {"name": "output_path", "type": "STRING", "links": null, "slot_index": 0},
-        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 1},
-        {"name": "preview_grid", "type": "IMAGE", "links": [4], "slot_index": 2}
+        {"name": "output_info", "type": "STRING", "links": [9], "slot_index": 1},
+        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 2},
+        {"name": "preview_grid", "type": "IMAGE", "links": [4], "slot_index": 3}
       ],
       "properties": {},
       "widgets_values": [
@@ -70,7 +71,7 @@
         0,
         "data_src",
         true,
-        "mediapipe"
+        "facenet"
       ],
       "title": "SOURCE (Young ~10K faces)",
       "color": "#223",
@@ -125,7 +126,7 @@
         {"name": "reference_embedding", "type": "FACE_EMBEDDING", "links": [6], "slot_index": 0}
       ],
       "properties": {},
-      "widgets_values": ["mediapipe", 0.5],
+      "widgets_values": ["facenet", 0.5],
       "color": "#322",
       "bgcolor": "#644"
     },
@@ -142,8 +143,9 @@
       ],
       "outputs": [
         {"name": "output_path", "type": "STRING", "links": null, "slot_index": 0},
-        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 1},
-        {"name": "preview_grid", "type": "IMAGE", "links": [8], "slot_index": 2}
+        {"name": "output_info", "type": "STRING", "links": [10], "slot_index": 1},
+        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 2},
+        {"name": "preview_grid", "type": "IMAGE", "links": [8], "slot_index": 3}
       ],
       "properties": {},
       "widgets_values": [
@@ -160,7 +162,7 @@
         0,
         "data_dst",
         true,
-        "mediapipe"
+        "facenet"
       ],
       "title": "DESTINATION (Old)",
       "color": "#322",

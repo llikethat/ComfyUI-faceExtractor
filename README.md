@@ -63,7 +63,7 @@ InsightFace is provided under a **non-commercial license**:
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/llikethat/comfyui_face_extractor.git
+git clone https://github.com/your-repo/comfyui_face_extractor.git
 cd comfyui_face_extractor
 
 # Recommended: FaceNet (commercial OK, high quality)

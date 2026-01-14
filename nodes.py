@@ -1127,9 +1127,9 @@ class FaceExtractor:
             }
         }
     
-    # Minimal return types to reduce browser memory
-    RETURN_TYPES = ("STRING", "INT", "IMAGE")
-    RETURN_NAMES = ("output_path", "extracted_count", "preview_grid")
+    # Return types include detailed output info
+    RETURN_TYPES = ("STRING", "STRING", "INT", "IMAGE")
+    RETURN_NAMES = ("output_path", "output_info", "extracted_count", "preview_grid")
     FUNCTION = "extract_faces"
     CATEGORY = "Face Extractor"
     OUTPUT_NODE = True
@@ -1382,10 +1382,45 @@ class FaceExtractor:
         # Final cleanup
         clear_memory(clear_gpu=True)
         
+        # Build detailed output info string
+        output_info_lines = [
+            f"═══════════════════════════════════════════",
+            f"EXTRACTION COMPLETE",
+            f"═══════════════════════════════════════════",
+            f"",
+            f"📁 Output Directory:",
+            f"   {output_path}",
+            f"",
+            f"📂 Aligned Faces:",
+            f"   {aligned_dir}",
+            f"   ({total_extracted} files)",
+            f"",
+            f"📂 Masks:",
+            f"   {masks_dir}",
+            f"   ({total_extracted} files)",
+            f"",
+            f"⏱️  Processing Time: {elapsed_time:.1f}s",
+            f"📊 Speed: {total_extracted/max(elapsed_time,1):.1f} faces/sec",
+            f"🔧 Backend: {detection_backend} ({detector.LICENSE})",
+            f"",
+        ]
+        
+        # Add sample filenames if available
+        if extraction_log:
+            output_info_lines.append("📄 Sample Files:")
+            for entry in extraction_log[:5]:  # Show first 5
+                output_info_lines.append(f"   • {entry['filename']} (sim: {entry['similarity']:.3f})")
+            if len(extraction_log) > 5:
+                output_info_lines.append(f"   ... and {len(extraction_log) - 5} more")
+        
+        output_info_lines.append(f"═══════════════════════════════════════════")
+        
+        output_info = "\n".join(output_info_lines)
+        
         print(f"[Face Extractor] ✓ Extracted {total_extracted} faces to {output_path}")
         print(f"[Face Extractor] ✓ Time: {elapsed_time:.1f}s ({total_extracted/max(elapsed_time,1):.1f} faces/sec)")
         
-        return (str(output_path), total_extracted, grid_tensor)
+        return (str(output_path), output_info, total_extracted, grid_tensor)
 
 
 class FaceMatcher:

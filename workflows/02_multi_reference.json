@@ -116,8 +116,9 @@
       ],
       "outputs": [
         {"name": "output_path", "type": "STRING", "links": [7], "slot_index": 0},
-        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 1},
-        {"name": "preview_grid", "type": "IMAGE", "links": [8], "slot_index": 2}
+        {"name": "output_info", "type": "STRING", "links": [9], "slot_index": 1},
+        {"name": "extracted_count", "type": "INT", "links": null, "slot_index": 2},
+        {"name": "preview_grid", "type": "IMAGE", "links": [8], "slot_index": 3}
       ],
       "properties": {},
       "widgets_values": [
