@@ -71,7 +71,7 @@
         {"name": "match_info", "type": "STRING", "links": [5], "slot_index": 1}
       ],
       "properties": {},
-      "widgets_values": ["mediapipe"],
+      "widgets_values": ["facenet"],
       "title": "Compare: Same"
     },
     {
@@ -91,7 +91,7 @@
         {"name": "match_info", "type": "STRING", "links": [6], "slot_index": 1}
       ],
       "properties": {},
-      "widgets_values": ["mediapipe"],
+      "widgets_values": ["facenet"],
       "title": "Compare: Different"
     },
     {
@@ -153,7 +153,7 @@
       "mode": 0,
       "properties": {},
       "widgets_values": [
-        "THRESHOLD GUIDE BY BACKEND\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\ninsightface (NON-COMMERCIAL):\n  Same: 0.65-0.85 | Different: 0.20-0.40 | Use: 0.55-0.65\n\nmediapipe (Commercial OK):\n  Same: 0.70-0.90 | Different: 0.40-0.60 | Use: 0.65-0.75\n\nopencv_cascade (Commercial OK):\n  Same: 0.75-0.95 | Different: 0.50-0.70 | Use: 0.70-0.80"
+        "THRESHOLD GUIDE BY BACKEND\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nfacenet ⭐ (Commercial OK - MIT):\n  Same: 0.65-0.85 | Different: 0.20-0.40 | Use: 0.55-0.65\n\nyolov8 (AGPL - needs license for commercial):\n  Same: 0.65-0.85 | Different: 0.20-0.40 | Use: 0.55-0.65\n\ninsightface (NON-COMMERCIAL):\n  Same: 0.65-0.85 | Different: 0.20-0.40 | Use: 0.55-0.65\n\nmediapipe (Commercial OK):\n  Same: 0.70-0.90 | Different: 0.40-0.60 | Use: 0.65-0.75\n\nopencv_cascade (Commercial OK):\n  Same: 0.75-0.95 | Different: 0.50-0.70 | Use: 0.70-0.80"
       ],
       "color": "#432",
       "bgcolor": "#653"

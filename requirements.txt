@@ -13,33 +13,68 @@ psutil>=5.8.0
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# OPTION 1: InsightFace (BEST QUALITY - NON-COMMERCIAL ONLY!)
+# OPTION 1: FaceNet (BEST FOR COMMERCIAL - MIT License) ⭐ RECOMMENDED
+# -----------------------------------------------------------------------------
+# FaceNet provides high-quality face detection (MTCNN) and neural network
+# embeddings (InceptionResnetV1). Fully MIT licensed - safe for commercial use!
+#
+# Quality: ⭐⭐⭐⭐⭐ (comparable to InsightFace)
+# License: MIT - https://github.com/timesler/facenet-pytorch/blob/master/LICENSE
+#
+# To install:
+# pip install facenet-pytorch
+facenet-pytorch>=2.5.0
+
+# -----------------------------------------------------------------------------
+# OPTION 2: YOLOv8 (Fast detection - AGPL-3.0)
+# -----------------------------------------------------------------------------
+# YOLOv8 provides very fast face/person detection.
+# ⚠️  AGPL-3.0 License - Commercial closed-source use requires Ultralytics license!
+# See: https://ultralytics.com/license
+#
+# Quality: ⭐⭐⭐⭐ (detection), embeddings via FaceNet if available
+# License: AGPL-3.0 (free for open-source, paid for commercial closed-source)
+#
+# To install:
+# pip install ultralytics
+ultralytics>=8.0.0
+
+# -----------------------------------------------------------------------------
+# OPTION 3: InsightFace (BEST QUALITY - NON-COMMERCIAL ONLY!)
 # -----------------------------------------------------------------------------
 # InsightFace provides the most accurate face detection and recognition.
 # However, it is licensed for NON-COMMERCIAL USE ONLY.
 # See: https://github.com/deepinsight/insightface#license
 #
-# To install:
+# Quality: ⭐⭐⭐⭐⭐ (highest)
+# License: Non-commercial only
+#
+# To install (optional):
 # pip install insightface onnxruntime-gpu
 #
 # For CPU only:
 # pip install insightface onnxruntime
-insightface>=0.7.3
-onnxruntime-gpu>=1.15.0
+
 # -----------------------------------------------------------------------------
-# OPTION 2: MediaPipe (GOOD QUALITY - COMMERCIAL OK)
+# OPTION 4: MediaPipe (GOOD QUALITY - COMMERCIAL OK)
 # -----------------------------------------------------------------------------
 # MediaPipe is Google's ML solution, licensed under Apache 2.0.
-# Safe for commercial use. Good detection quality.
+# Safe for commercial use. Good detection quality but simpler embeddings.
+#
+# Quality: ⭐⭐⭐⭐ (detection), ⭐⭐⭐ (embeddings - histogram based)
+# License: Apache 2.0
 #
 # To install:
 # pip install mediapipe
 mediapipe>=0.10.0
 
 # -----------------------------------------------------------------------------
-# OPTION 3: OpenCV Cascade (BASIC - COMMERCIAL OK)
+# OPTION 5: OpenCV Cascade (BASIC - COMMERCIAL OK)
 # -----------------------------------------------------------------------------
 # Built into OpenCV, no additional install needed.
 # Licensed under BSD. Safe for commercial use.
-# Lower accuracy than InsightFace/MediaPipe but always available.
+# Lower accuracy than neural network methods but always available.
+#
+# Quality: ⭐⭐⭐
+# License: BSD
 # (Already included in opencv-python)

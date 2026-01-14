@@ -33,7 +33,7 @@
         {"name": "reference_embedding", "type": "FACE_EMBEDDING", "links": [2], "slot_index": 0}
       ],
       "properties": {},
-      "widgets_values": ["mediapipe", 0.5],
+      "widgets_values": ["facenet", 0.5],
       "title": "Create Reference Embedding"
     },
     {
@@ -67,7 +67,7 @@
         0,
         "face_extract",
         true,
-        "mediapipe"
+        "facenet"
       ],
       "title": "Extract Faces"
     },
@@ -110,7 +110,7 @@
       "mode": 0,
       "properties": {},
       "widgets_values": [
-        "BASIC FACE EXTRACTION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n✓ Direct video path - no VHS_LoadVideo needed\n✓ Streaming mode - works with ANY video length\n✓ Aspect ratio preserved - no squashing\n✓ GPU memory flushed automatically\n\nBACKEND OPTIONS:\n• insightface - Best quality, NON-COMMERCIAL ONLY!\n• mediapipe - Good quality, Commercial OK ✓\n• opencv_cascade - Basic, Commercial OK ✓\n\nCHUNKING OPTIONS:\n• chunk_size=0: Auto-calculate based on memory\n• chunk_size=100-500: Manual control\n\n⚠️  For commercial projects, use mediapipe!"
+        "BASIC FACE EXTRACTION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n✓ Direct video path - no VHS_LoadVideo needed\n✓ Streaming mode - works with ANY video length\n✓ Aspect ratio preserved - no squashing\n✓ GPU memory flushed automatically\n\nBACKEND OPTIONS:\n• facenet ⭐ - Best quality, Commercial OK (MIT)\n• yolov8 - Fast, AGPL (commercial needs license)\n• insightface - Best quality, NON-COMMERCIAL ONLY!\n• mediapipe - Good quality, Commercial OK\n• opencv_cascade - Basic, Commercial OK\n\nCHUNKING OPTIONS:\n• chunk_size=0: Auto-calculate based on memory\n• chunk_size=100-500: Manual control"
       ],
       "color": "#432",
       "bgcolor": "#653"

@@ -33,6 +33,8 @@ import comfy.utils
 # Detection backends
 INSIGHTFACE_AVAILABLE = False
 MEDIAPIPE_AVAILABLE = False
+FACENET_AVAILABLE = False
+YOLOV8_AVAILABLE = False
 
 try:
     from insightface.app import FaceAnalysis
@@ -43,6 +45,18 @@ except ImportError:
 try:
     import mediapipe as mp
     MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    pass
+
+try:
+    from facenet_pytorch import MTCNN, InceptionResnetV1
+    FACENET_AVAILABLE = True
+except ImportError:
+    pass
+
+try:
+    from ultralytics import YOLO
+    YOLOV8_AVAILABLE = True
 except ImportError:
     pass
 
@@ -318,6 +332,264 @@ class OpenCVCascadeBackend:
         return embedding.astype(np.float32)
 
 
+class FaceNetBackend:
+    """
+    FaceNet backend using facenet-pytorch - COMMERCIAL USE OK (MIT License)
+    Uses MTCNN for detection and InceptionResnetV1 for embeddings.
+    High quality neural network embeddings similar to InsightFace.
+    
+    License: MIT - https://github.com/timesler/facenet-pytorch/blob/master/LICENSE
+    """
+    
+    LICENSE = "COMMERCIAL_OK"
+    
+    def __init__(self, device: str = "cuda"):
+        if not FACENET_AVAILABLE:
+            raise RuntimeError("FaceNet not installed. Run: pip install facenet-pytorch")
+        
+        self.device = torch.device('cuda' if torch.cuda.is_available() and device == "cuda" else 'cpu')
+        
+        # MTCNN for face detection
+        self.mtcnn = MTCNN(
+            image_size=160,
+            margin=0,
+            min_face_size=20,
+            thresholds=[0.6, 0.7, 0.7],
+            factor=0.709,
+            post_process=True,
+            device=self.device,
+            keep_all=True  # Detect all faces
+        )
+        
+        # InceptionResnetV1 for embeddings (pretrained on VGGFace2)
+        self.resnet = InceptionResnetV1(pretrained='vggface2').eval().to(self.device)
+        
+        self.using_gpu = self.device.type == 'cuda'
+        self.name = "facenet"
+        
+        if self.using_gpu:
+            print(f"[Face Extractor] FaceNet using GPU: {torch.cuda.get_device_name(0)}")
+    
+    def detect_faces(self, image: np.ndarray) -> List[dict]:
+        # Convert BGR to RGB
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            rgb_image = image
+        
+        # Convert to PIL for MTCNN
+        pil_image = Image.fromarray(rgb_image)
+        
+        # Detect faces - returns boxes and probabilities
+        boxes, probs, landmarks = self.mtcnn.detect(pil_image, landmarks=True)
+        
+        results = []
+        
+        if boxes is not None:
+            # Get face crops for embedding computation
+            faces_cropped = self.mtcnn(pil_image)
+            
+            for i, (box, prob) in enumerate(zip(boxes, probs)):
+                if prob is None:
+                    continue
+                    
+                x1, y1, x2, y2 = [int(c) for c in box]
+                
+                # Clamp to image bounds
+                h, w = image.shape[:2]
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                
+                # Compute embedding if face was cropped successfully
+                embedding = None
+                if faces_cropped is not None:
+                    if len(faces_cropped.shape) == 3:
+                        # Single face
+                        face_tensor = faces_cropped.unsqueeze(0).to(self.device)
+                    else:
+                        # Multiple faces
+                        if i < faces_cropped.shape[0]:
+                            face_tensor = faces_cropped[i].unsqueeze(0).to(self.device)
+                        else:
+                            face_tensor = None
+                    
+                    if face_tensor is not None:
+                        with torch.no_grad():
+                            embedding = self.resnet(face_tensor).cpu().numpy().flatten()
+                
+                # Get landmarks for this face if available
+                face_landmarks = None
+                if landmarks is not None and i < len(landmarks):
+                    face_landmarks = landmarks[i]
+                
+                results.append({
+                    'bbox': [x1, y1, x2, y2],
+                    'landmarks': face_landmarks,
+                    'embedding': embedding,
+                    'confidence': float(prob),
+                })
+        
+        return results
+
+
+class YOLOv8Backend:
+    """
+    YOLOv8 backend using Ultralytics - AGPL-3.0 License
+    
+    ⚠️  COMMERCIAL USE REQUIRES ULTRALYTICS LICENSE!
+    For commercial closed-source applications, you must purchase a license from Ultralytics.
+    See: https://ultralytics.com/license
+    
+    Uses YOLOv8 for face detection with FaceNet-style embeddings.
+    """
+    
+    LICENSE = "AGPL-3.0 (Commercial license required for closed-source)"
+    
+    def __init__(self, device: str = "cuda"):
+        if not YOLOV8_AVAILABLE:
+            raise RuntimeError("YOLOv8 not installed. Run: pip install ultralytics")
+        
+        self.device = 'cuda' if torch.cuda.is_available() and device == "cuda" else 'cpu'
+        
+        # Load YOLOv8 face model
+        # First try yolov8n-face, fall back to general yolov8n
+        try:
+            # Try to load face-specific model if available
+            self.model = YOLO('yolov8n-face.pt')
+            self.is_face_model = True
+        except:
+            # Fall back to general model - will detect 'person' class
+            self.model = YOLO('yolov8n.pt')
+            self.is_face_model = False
+            print("[Face Extractor] YOLOv8 face model not found, using general model")
+        
+        self.model.to(self.device)
+        self.using_gpu = self.device == 'cuda'
+        self.name = "yolov8"
+        self._embedding_size = 512
+        
+        # Try to use FaceNet for embeddings if available (better quality)
+        self._facenet_embedder = None
+        if FACENET_AVAILABLE:
+            try:
+                facenet_device = torch.device(self.device)
+                self._facenet_embedder = InceptionResnetV1(pretrained='vggface2').eval().to(facenet_device)
+                print("[Face Extractor] YOLOv8 using FaceNet for embeddings")
+            except:
+                pass
+        
+        if self.using_gpu:
+            print(f"[Face Extractor] YOLOv8 using GPU: {torch.cuda.get_device_name(0)}")
+    
+    def detect_faces(self, image: np.ndarray) -> List[dict]:
+        # Convert BGR to RGB for YOLO
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            rgb_image = image
+        
+        # Run YOLO detection
+        results = self.model(rgb_image, verbose=False)
+        
+        faces = []
+        h, w = image.shape[:2]
+        
+        for result in results:
+            boxes = result.boxes
+            if boxes is None:
+                continue
+            
+            for i, box in enumerate(boxes):
+                # Get class - for face model it's face, for general model look for person (class 0)
+                cls = int(box.cls[0])
+                
+                # Filter: face model detects faces directly, general model we use class 0 (person)
+                # For person detection, we'll try to find face region within the person bbox
+                if not self.is_face_model and cls != 0:
+                    continue
+                
+                conf = float(box.conf[0])
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                
+                # Clamp to image bounds
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                
+                # For person detection, estimate face region (upper portion)
+                if not self.is_face_model:
+                    person_h = y2 - y1
+                    # Face is typically in top 30% of person bbox
+                    y2 = y1 + int(person_h * 0.35)
+                    # Narrow the width slightly
+                    person_w = x2 - x1
+                    x1 = x1 + int(person_w * 0.15)
+                    x2 = x2 - int(person_w * 0.15)
+                
+                # Compute embedding
+                embedding = self._compute_embedding(image, [x1, y1, x2, y2])
+                
+                faces.append({
+                    'bbox': [x1, y1, x2, y2],
+                    'landmarks': None,
+                    'embedding': embedding,
+                    'confidence': conf,
+                })
+        
+        return faces
+    
+    def _compute_embedding(self, image: np.ndarray, bbox: List[int]) -> np.ndarray:
+        """Compute face embedding using FaceNet if available, otherwise histogram-based"""
+        x1, y1, x2, y2 = bbox
+        face_region = image[y1:y2, x1:x2]
+        
+        if face_region.size == 0:
+            return np.zeros(self._embedding_size)
+        
+        # Use FaceNet embedder if available
+        if self._facenet_embedder is not None:
+            try:
+                # Resize and normalize for FaceNet
+                face_rgb = cv2.cvtColor(face_region, cv2.COLOR_BGR2RGB)
+                face_resized = cv2.resize(face_rgb, (160, 160))
+                
+                # Convert to tensor
+                face_tensor = torch.from_numpy(face_resized).permute(2, 0, 1).float()
+                face_tensor = (face_tensor - 127.5) / 128.0  # Normalize
+                face_tensor = face_tensor.unsqueeze(0).to(next(self._facenet_embedder.parameters()).device)
+                
+                with torch.no_grad():
+                    embedding = self._facenet_embedder(face_tensor).cpu().numpy().flatten()
+                
+                return embedding
+            except Exception as e:
+                pass  # Fall back to histogram
+        
+        # Histogram-based fallback
+        face_resized = cv2.resize(face_region, (64, 64))
+        lab = cv2.cvtColor(face_resized, cv2.COLOR_BGR2LAB)
+        
+        hist_features = []
+        for i in range(3):
+            hist = cv2.calcHist([lab], [i], None, [32], [0, 256])
+            hist = hist.flatten() / (hist.sum() + 1e-8)
+            hist_features.extend(hist)
+        
+        gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
+        spatial = cv2.resize(gray, (8, 8)).flatten() / 255.0
+        
+        embedding = np.concatenate([hist_features, spatial])
+        embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+        
+        # Pad to embedding size
+        if len(embedding) < self._embedding_size:
+            embedding = np.pad(embedding, (0, self._embedding_size - len(embedding)))
+        else:
+            embedding = embedding[:self._embedding_size]
+        
+        return embedding.astype(np.float32)
+
+
 class FaceDetectorBackend:
     """
     Unified face detection backend factory.
@@ -327,19 +599,45 @@ class FaceDetectorBackend:
     _instances = {}
     
     @classmethod
-    def get_backend(cls, backend: str = "insightface", device: str = "cuda"):
+    def get_backend(cls, backend: str = "facenet", device: str = "cuda"):
         key = f"{backend}_{device}"
         
         if key not in cls._instances:
+            # FaceNet - MIT License (Commercial OK) - RECOMMENDED
+            if backend == "facenet":
+                if not FACENET_AVAILABLE:
+                    print("[Face Extractor] FaceNet not available, falling back to MediaPipe")
+                    backend = "mediapipe"
+                else:
+                    print("[Face Extractor] ✓ FaceNet: Commercial use OK (MIT License)")
+                    cls._instances[key] = FaceNetBackend(device)
+                    return cls._instances[key]
+            
+            # YOLOv8 - AGPL-3.0 (Commercial requires license)
+            if backend == "yolov8":
+                if not YOLOV8_AVAILABLE:
+                    print("[Face Extractor] YOLOv8 not available, falling back to FaceNet")
+                    backend = "facenet"
+                    if not FACENET_AVAILABLE:
+                        backend = "mediapipe"
+                else:
+                    print("[Face Extractor] ⚠️  YOLOv8: AGPL-3.0 - Commercial use requires Ultralytics license!")
+                    cls._instances[key] = YOLOv8Backend(device)
+                    return cls._instances[key]
+            
+            # InsightFace - Non-commercial only
             if backend == "insightface":
                 if not INSIGHTFACE_AVAILABLE:
-                    print("[Face Extractor] InsightFace not available, falling back to MediaPipe")
-                    backend = "mediapipe"
+                    print("[Face Extractor] InsightFace not available, falling back to FaceNet")
+                    backend = "facenet"
+                    if not FACENET_AVAILABLE:
+                        backend = "mediapipe"
                 else:
                     print("[Face Extractor] ⚠️  InsightFace: NON-COMMERCIAL USE ONLY!")
                     cls._instances[key] = InsightFaceBackend(device)
                     return cls._instances[key]
             
+            # MediaPipe - Apache 2.0 (Commercial OK)
             if backend == "mediapipe":
                 if not MEDIAPIPE_AVAILABLE:
                     print("[Face Extractor] MediaPipe not available, falling back to OpenCV")
@@ -349,6 +647,7 @@ class FaceDetectorBackend:
                     cls._instances[key] = MediaPipeBackend(device)
                     return cls._instances[key]
             
+            # OpenCV Cascade - BSD (Commercial OK)
             if backend == "opencv_cascade":
                 print("[Face Extractor] ✓ OpenCV Cascade: Commercial use OK (BSD)")
                 cls._instances[key] = OpenCVCascadeBackend(device)
@@ -360,11 +659,16 @@ class FaceDetectorBackend:
     
     @classmethod
     def get_available_backends(cls) -> List[str]:
+        """Return list of available backends, ordered by recommendation"""
         backends = ["opencv_cascade"]  # Always available
         if MEDIAPIPE_AVAILABLE:
             backends.insert(0, "mediapipe")
         if INSIGHTFACE_AVAILABLE:
             backends.insert(0, "insightface")
+        if YOLOV8_AVAILABLE:
+            backends.insert(0, "yolov8")
+        if FACENET_AVAILABLE:
+            backends.insert(0, "facenet")  # FaceNet first if available (MIT + high quality)
         return backends
 
 

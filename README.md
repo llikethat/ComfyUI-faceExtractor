@@ -10,21 +10,32 @@ Memory-efficient face extraction with reference-based matching. Works with video
 
 This tool supports multiple face detection backends with **different licenses**:
 
-| Backend | License | Commercial Use | Quality | GPU |
-|---------|---------|----------------|---------|-----|
-| **insightface** | Non-Commercial | ❌ NO | ⭐⭐⭐⭐⭐ Best | ✅ |
-| **mediapipe** | Apache 2.0 | ✅ YES | ⭐⭐⭐⭐ Good | ❌ |
-| **opencv_cascade** | BSD | ✅ YES | ⭐⭐⭐ Basic | ❌ |
+| Backend | License | Commercial Use | Quality | GPU | Embeddings |
+|---------|---------|----------------|---------|-----|------------|
+| **facenet** ⭐ | MIT | ✅ YES | ⭐⭐⭐⭐⭐ Best | ✅ | Neural (512-dim) |
+| **yolov8** | AGPL-3.0 | ⚠️ License required | ⭐⭐⭐⭐ Good | ✅ | Neural (if FaceNet installed) |
+| **insightface** | Non-Commercial | ❌ NO | ⭐⭐⭐⭐⭐ Best | ✅ | Neural (512-dim) |
+| **mediapipe** | Apache 2.0 | ✅ YES | ⭐⭐⭐⭐ Good | ❌ | Histogram |
+| **opencv_cascade** | BSD | ✅ YES | ⭐⭐⭐ Basic | ❌ | Histogram |
 
-### For Commercial Projects
+### ⭐ Recommended for Commercial Projects: `facenet`
 
-**DO NOT use `insightface` backend for commercial work!**
-
-Use `mediapipe` or `opencv_cascade` instead:
+FaceNet (facenet-pytorch) provides:
+- **MIT License** - fully free for commercial use
+- **High-quality neural embeddings** (512-dim, comparable to InsightFace)
+- **GPU acceleration** (CUDA)
+- **MTCNN face detection** (also MIT licensed)
 
 ```
-detection_backend: "mediapipe"   # Recommended for commercial
+detection_backend: "facenet"   # Recommended for commercial
 ```
+
+### YOLOv8 License Notice
+
+YOLOv8 (Ultralytics) uses **AGPL-3.0** license:
+- ✅ Free for open-source projects
+- ⚠️ Commercial closed-source use requires purchasing a license from Ultralytics
+- See: https://ultralytics.com/license
 
 ### InsightFace License Notice
 
@@ -34,8 +45,6 @@ InsightFace is provided under a **non-commercial license**:
 > For commercial use, please contact the authors for licensing terms.
 > 
 > Source: https://github.com/deepinsight/insightface#license
-
-If you need InsightFace quality for commercial work, contact InsightFace for a commercial license.
 
 ---
 
@@ -54,14 +63,27 @@ If you need InsightFace quality for commercial work, contact InsightFace for a c
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/llikethat/ComfyUI_faceExtractor.git
+git clone https://github.com/your-repo/comfyui_face_extractor.git
 cd comfyui_face_extractor
 
-# For non-commercial use (best quality):
-pip install insightface onnxruntime-gpu mediapipe psutil
+# Recommended: FaceNet (commercial OK, high quality)
+pip install facenet-pytorch mediapipe psutil
 
-# For commercial use (good quality):
-pip install mediapipe psutil
+# Optional: YOLOv8 (fast detection, AGPL license)
+pip install ultralytics
+
+# Optional: InsightFace (non-commercial only, highest quality)
+pip install insightface onnxruntime-gpu
+```
+
+### Minimal Installation (Commercial OK)
+```bash
+pip install facenet-pytorch psutil
+```
+
+### Full Installation (All backends)
+```bash
+pip install facenet-pytorch ultralytics insightface onnxruntime-gpu mediapipe psutil
 ```
 
 ---
@@ -173,6 +195,24 @@ Original: 400x500 → Scaled to 409x512 → Centered on 512x512 canvas
 
 ## Backend Comparison
 
+### FaceNet ⭐ RECOMMENDED (Commercial OK)
+```
++ High accuracy (comparable to InsightFace)
++ Neural network embeddings (512-dim)
++ GPU accelerated (CUDA)
++ MIT License - fully commercial safe!
++ MTCNN detection (also MIT)
+```
+
+### YOLOv8 (AGPL - Commercial needs license)
+```
++ Very fast detection
++ Good accuracy
++ GPU accelerated
++ Uses FaceNet embeddings if available
+- AGPL-3.0 - commercial closed-source needs Ultralytics license
+```
+
 ### InsightFace (Non-Commercial Only)
 ```
 + Best accuracy
@@ -205,9 +245,13 @@ Original: 400x500 → Scaled to 409x512 → Centered on 512x512 canvas
 
 | Backend | Same Person | Different Person | Recommended |
 |---------|-------------|------------------|-------------|
+| facenet | 0.65-0.85 | 0.20-0.40 | 0.55-0.65 |
+| yolov8 (w/FaceNet) | 0.65-0.85 | 0.20-0.40 | 0.55-0.65 |
 | insightface | 0.65-0.85 | 0.20-0.40 | 0.55-0.65 |
 | mediapipe | 0.70-0.90 | 0.40-0.60 | 0.65-0.75 |
 | opencv_cascade | 0.75-0.95 | 0.50-0.70 | 0.70-0.80 |
+
+**Note:** FaceNet, YOLOv8 (with FaceNet embeddings), and InsightFace all use neural network embeddings with similar behavior. MediaPipe and OpenCV use histogram-based embeddings which require higher thresholds.
 
 **Use Face Matcher node to find optimal threshold for your specific use case!**
 
@@ -233,6 +277,16 @@ The `extraction_log.json` includes:
 - Aspect ratio preservation info
 - Similarity scores for each face
 - Processing statistics
+
+---
+
+## Use with DeepFaceLab
+
+After extraction, copy faces to DFL workspace:
+
+```bash
+cp ComfyUI/output/face_extract_001/aligned/* workspace/data_src/aligned/
+```
 
 ---
 

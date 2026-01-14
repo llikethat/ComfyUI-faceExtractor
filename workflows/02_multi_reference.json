@@ -100,7 +100,7 @@
         {"name": "reference_embedding", "type": "FACE_EMBEDDING", "links": [6], "slot_index": 0}
       ],
       "properties": {},
-      "widgets_values": ["mediapipe", 0.5],
+      "widgets_values": ["facenet", 0.5],
       "title": "Averaged Embedding"
     },
     {
@@ -134,7 +134,7 @@
         0,
         "multi_ref",
         true,
-        "mediapipe"
+        "facenet"
       ],
       "title": "Extract with Multi-Ref"
     },
